@@ -1,50 +1,68 @@
-# Welcome to your Expo app 👋
+# Aza Mirobaroba 🛒🇲🇬
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**Aza Mirobaroba** ("Ne pas se laisser surprendre/gaspiller") est une application mobile de gestion budgétaire intelligente conçue pour optimiser les achats au marché dans le contexte économique malgache. 
 
-## Get started
+L'application utilise un algorithme de recherche **Branch and Bound** pour garantir que les besoins vitaux (Riz, PPN) sont satisfaits avant d'allouer le budget restant aux catégories secondaires.
 
-1. Install dependencies
+## 🌟 Points Forts
+- **Priorisation Culturelle :** Système de notation (`rate`) basé sur les habitudes de consommation locales (ex: Le riz est la priorité absolue).
+- **Algorithme d'Optimisation :** Résolution du problème du sac à dos (Knapsack Problem) sous contraintes de priorités strictes.
+- **Architecture Offline-First :** Utilisation de SQLite pour une réactivité totale même sans connexion internet au fond du marché.
+- **Interface Moderne :** Design minimaliste et sombre avec des accents émeraude, optimisé pour la lecture rapide en extérieur.
 
+## 🛠️ Stack Technique
+- **Framework :** [React Native](https://reactnative.dev/) (Expo)
+- **Langage :** TypeScript
+- **Base de Données :** [SQLite](https://www.sqlite.org/) via `expo-sqlite`
+- **ORM :** [Drizzle ORM](https://orm.drizzle.team/)
+- **Gestion d'état :** React Context API
+
+## 📈 Classification des Besoins (Algorithme)
+
+L'application classe automatiquement les dépenses pour guider l'algorithme d'élagage :
+
+| Catégorie | Rate | Description |
+| :--- | :--- | :--- |
+| **Vary (Riz)** | 1 | Base de l'alimentation (souvent > 50% du budget). |
+| **PPN** | 2 | Produits de Première Nécessité (Huile, Charbon, Sel). |
+| **Santé** | 3 | Soins urgents et pharmacie de base. |
+| **Hygiène** | 4 | Savon, lessive, produits corporels. |
+| **Éducation** | 5 | Fournitures scolaires essentielles. |
+| **Consommables** | 6 | Carburant, Crédit appel/data, Taxi-be. |
+| **Frais Fixes** | 7 | Loyer, Jirama (ajustables en cas de crise). |
+| **Accessoires** | 8 | Vêtements, friperie, petits objets. |
+| **Confort/Luxe**| 9-10| Loisirs, mobilier non-urgent, sorties. |
+
+## 🏗️ Architecture des Données
+
+Le schéma de base de données est optimisé pour les jointures rapides entre les prix du marché et la liste de courses :
+
+- `categories` : Stocke les libellés et les coefficients de priorité.
+- `products` : Catalogue des articles liés aux unités (Kg, Kapoaka, Litre).
+- `market_prices` : Historique des prix relevés auprès des différents vendeurs.
+- `shopping_list` : Le panier courant en attente d'optimisation.
+
+## 🚀 Installation
+
+1. **Cloner le dépôt**
    ```bash
-   npm install
-   ```
+   git clone [https://github.com/votre-username/aza-mirobaroba.git](https://github.com/votre-username/aza-mirobaroba.git)
 
-2. Start the app
+2. **Installer les dépendances**
+    ```bash
+    npm install
 
-   ```bash
-   npx expo start
-   ```
+3. **Configurer la base de données**
+    ```bash
+    npx drizzle-kit generate
+    npx drizzle-kit export # Pour générer les migrations mobiles
 
-In the output, you'll find options to open the app in a
+3. **Lancer l'application**
+    ```bash
+    npx expo start
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 🧠 À propos de l'algorithme
+L'algorithme de Branch and Bound explore les combinaisons de produits. Si le prix estimé (basé sur le prix le plus élevé du marché) dépasse le budget, il coupe (élague) les branches correspondant aux catégories de rate élevé (8 à 10) pour stabiliser le panier sur les besoins essentiels.
 
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Développé par RATOVOARISON Tsiory Ny Rina Étudiant 
