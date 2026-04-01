@@ -1,6 +1,6 @@
-# Aza Mirobaroba 🛒🇲🇬
+# 'Ndeha hiantsena' 🛒🇲🇬
 
-**Aza Mirobaroba** ("Ne pas se laisser surprendre/gaspiller") est une application mobile de gestion budgétaire intelligente conçue pour optimiser les achats au marché dans le contexte économique malgache. 
+**'ndeha hiantsena'**  est une application mobile de gestion budgétaire intelligente conçue pour optimiser les achats au marché dans le contexte économique malagasy. 
 
 L'application utilise un algorithme de recherche **Branch and Bound** pour garantir que les besoins vitaux (Riz, PPN) sont satisfaits avant d'allouer le budget restant aux catégories secondaires.
 
