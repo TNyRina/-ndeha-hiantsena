@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { Text, View, StyleSheet } from 'react-native';
 import { ModalShell, FormInput, SelectPicker, SelectOption } from './FormComponents';
-import { Category, Unit, Seller, Product, Pannier, MarketPriceWithDetails } from '@/src/database/purchaseService';
+import { Category, Unit, Seller, Product, Pannier, MarketPriceWithDetails } from '@/src/services/purchaseService';
 
 type Theme = Parameters<typeof ModalShell>[0]['theme'];
 

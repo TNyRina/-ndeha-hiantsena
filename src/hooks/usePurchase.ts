@@ -12,7 +12,7 @@ import {
   createMarketPrice, createShoppingListItem, deleteShoppingListItem,
   Category, Unit, Seller, Product, Pannier,
   MarketPriceWithDetails, ShoppingListWithDetails,
-} from '@/src/database/purchaseService';
+} from '@/src/services/purchaseService';
 
 export type ModalType =
   | 'pannier'

@@ -24,7 +24,7 @@ import {
   PannierModal, ProductModal, SellerModal,
   MarketPriceModal, ShoppingListModal,
 } from '@/src/components/purchase/Modals';
-import { ShoppingListWithDetails, Pannier } from '@/src/database/purchaseService';
+import { ShoppingListWithDetails, Pannier } from '@/src/services/purchaseService';
 
 
 function computeSecureTotalCost(items: ShoppingListWithDetails[]): number {
@@ -91,11 +91,9 @@ function ActivePannierCard({
   return (
     <View style={[s.pannierCard, { backgroundColor: c.accent.primary }]}>
       {/* Déco circles */}
-      <View style={s.circle1} /><View style={s.circle2} />
-
       <View style={s.pannierCardRow}>
         <View style={{ flex: 1 }}>
-          <Text style={s.pannierLabel}>Panier actif</Text>
+          <Text style={s.pannierLabel}>Votre pannier</Text>
           <Text style={s.pannierDesc} numberOfLines={1}>
             {pannier.description || pannier.date}
           </Text>
@@ -430,7 +428,7 @@ const s = StyleSheet.create({
   scroll:           { paddingHorizontal: 20, paddingTop: 16, gap: 14 },
 
   // Pannier card
-  pannierCard:  { borderRadius: 20, padding: 20, overflow: 'hidden', position: 'relative' },
+  pannierCard:  { borderRadius: 20, padding: 20, position: 'relative' },
   pannierEmpty: { borderRadius: 20, padding: 24, borderWidth: 1, alignItems: 'center', gap: 8 },
   pannierEmptyText: { fontSize: 14, fontWeight: '500' },
   circle1: { position: 'absolute', width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.1)', top: -30, right: -20 },
