@@ -1,0 +1,28 @@
+{
+    "common": {
+        "ok": "OK",
+        "cancel": "Annuler"
+    },
+    "auth": {
+        "login": "Se connecter",
+        "logout": "Se déconnecter"
+    },
+    "settings": {
+        "title": "Paramètres",
+        "theme": "Theme",
+        "language": "Langue",
+        "dark": "Mode sombre",
+        "light": "Mode clair"
+    },
+    "home": {
+        "title": "Accueil",
+        "welcome": "Bienvenue dans l'application"
+    },
+    "purchase": {
+        "title": "Achat"
+    }
+    ,
+    "about": {
+        "title": "A propos"
+    }
+}

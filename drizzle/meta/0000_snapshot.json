@@ -1,0 +1,383 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "f3017456-876d-4a47-b182-937bedd3bfe8",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "categories": {
+      "name": "categories",
+      "columns": {
+        "id_category": {
+          "name": "id_category",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "label_category": {
+          "name": "label_category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rate": {
+          "name": "rate",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "categories_label_category_unique": {
+          "name": "categories_label_category_unique",
+          "columns": [
+            "label_category"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "rate_positive": {
+          "name": "rate_positive",
+          "value": "\"categories\".\"rate\" > 0"
+        }
+      }
+    },
+    "market_prices": {
+      "name": "market_prices",
+      "columns": {
+        "id_market": {
+          "name": "id_market",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "id_product": {
+          "name": "id_product",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "id_seller": {
+          "name": "id_seller",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "price": {
+          "name": "price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "market_prices_id_product_products_id_product_fk": {
+          "name": "market_prices_id_product_products_id_product_fk",
+          "tableFrom": "market_prices",
+          "tableTo": "products",
+          "columnsFrom": [
+            "id_product"
+          ],
+          "columnsTo": [
+            "id_product"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "market_prices_id_seller_sellers_id_seller_fk": {
+          "name": "market_prices_id_seller_sellers_id_seller_fk",
+          "tableFrom": "market_prices",
+          "tableTo": "sellers",
+          "columnsFrom": [
+            "id_seller"
+          ],
+          "columnsTo": [
+            "id_seller"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "panniers": {
+      "name": "panniers",
+      "columns": {
+        "id_pannier": {
+          "name": "id_pannier",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "budget": {
+          "name": "budget",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "optimized_price": {
+          "name": "optimized_price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "products": {
+      "name": "products",
+      "columns": {
+        "id_product": {
+          "name": "id_product",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "label_product": {
+          "name": "label_product",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "id_category": {
+          "name": "id_category",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "id_unit": {
+          "name": "id_unit",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "products_label_product_unique": {
+          "name": "products_label_product_unique",
+          "columns": [
+            "label_product"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "products_id_category_categories_id_category_fk": {
+          "name": "products_id_category_categories_id_category_fk",
+          "tableFrom": "products",
+          "tableTo": "categories",
+          "columnsFrom": [
+            "id_category"
+          ],
+          "columnsTo": [
+            "id_category"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "products_id_unit_units_id_unit_fk": {
+          "name": "products_id_unit_units_id_unit_fk",
+          "tableFrom": "products",
+          "tableTo": "units",
+          "columnsFrom": [
+            "id_unit"
+          ],
+          "columnsTo": [
+            "id_unit"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "sellers": {
+      "name": "sellers",
+      "columns": {
+        "id_seller": {
+          "name": "id_seller",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name_seller": {
+          "name": "name_seller",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "localisation": {
+          "name": "localisation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "shopping_list": {
+      "name": "shopping_list",
+      "columns": {
+        "id_shopping": {
+          "name": "id_shopping",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "id_pannier": {
+          "name": "id_pannier",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "id_market": {
+          "name": "id_market",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quantity_requested": {
+          "name": "quantity_requested",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "shopping_list_id_pannier_panniers_id_pannier_fk": {
+          "name": "shopping_list_id_pannier_panniers_id_pannier_fk",
+          "tableFrom": "shopping_list",
+          "tableTo": "panniers",
+          "columnsFrom": [
+            "id_pannier"
+          ],
+          "columnsTo": [
+            "id_pannier"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "shopping_list_id_market_market_prices_id_market_fk": {
+          "name": "shopping_list_id_market_market_prices_id_market_fk",
+          "tableFrom": "shopping_list",
+          "tableTo": "market_prices",
+          "columnsFrom": [
+            "id_market"
+          ],
+          "columnsTo": [
+            "id_market"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "units": {
+      "name": "units",
+      "columns": {
+        "id_unit": {
+          "name": "id_unit",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "label_unit": {
+          "name": "label_unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "units_label_unit_unique": {
+          "name": "units_label_unit_unique",
+          "columns": [
+            "label_unit"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

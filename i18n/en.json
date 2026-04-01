@@ -1,0 +1,28 @@
+{
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel"
+  },
+  "auth": {
+    "login": "Login",
+    "logout": "Logout"
+  },
+  "settings": {
+    "title": "Settings",
+    "theme": "Theme",
+    "language": "Language",
+    "dark": "Dark mode",
+    "light": "Light mode"
+  },
+  "home": {
+    "title": "Home",
+    "welcome": "Welcome to the app"
+  },
+    "purchase": {
+        "title": "Purchase"
+    }
+    ,
+    "about": {
+        "title": "About"
+    }
+}

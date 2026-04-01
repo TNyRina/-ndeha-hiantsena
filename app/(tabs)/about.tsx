@@ -1,15 +1,13 @@
-import { Text, View , useColorScheme} from "react-native";
+import { Text, View, useColorScheme } from 'react-native';
 import { useTheme } from "@/styles/theme";
 import { createLayoutStyles } from "@/styles/layout";
 import { createComponentStyles } from "@/styles/components";
-import { createHomeStyles } from "@/styles/screens/home";
-import { useTranslation } from "react-i18next";
+import { useTranslation } from 'react-i18next';
 
-export default function Index() {
+export default function AboutScreen() {
     const theme = useTheme();
     const layout = createLayoutStyles(theme);
     const comp   = createComponentStyles(theme);
-    const s      = createHomeStyles(theme);
 
     const { t, i18n } = useTranslation();
 
@@ -17,7 +15,7 @@ export default function Index() {
         <View style={layout.screen}>
             <View style={layout.header}>
                 <Text style={comp.title}>
-                    {i18n.t("home.title")}
+                    { i18n.t("about.title") }
                 </Text>
             </View>
         </View>

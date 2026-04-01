@@ -1,24 +1,95 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useEffect, useState } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { db } from '@/src/database';
+import migrations from '@/drizzle/migrations';
+import { seedDatabase } from '@/src/database/seed';
+import { ThemeProvider } from '@/styles/themeContext';
+import '@/i18n/config';
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+// ─── États possibles de l'initialisation ──────────────────────────────────────
+type AppState = 'loading' | 'ready' | 'error';
 
+// ─── Écran de chargement ──────────────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <View style={styles.centered}>
+      <ActivityIndicator size="large" />
+      <Text style={styles.loadingText}>Initialisation...</Text>
+    </View>
+  );
+}
+
+// ─── Écran d'erreur ───────────────────────────────────────────────────────────
+function ErrorScreen({ message }: { message: string }) {
+  return (
+    <View style={styles.centered}>
+      <Text style={styles.errorText}>Une erreur est survenue</Text>
+      <Text style={styles.errorDetail}>{message}</Text>
+    </View>
+  );
+}
+
+// ─── Layout racine ────────────────────────────────────────────────────────────
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const { success: migrationsSuccess, error: migrationError } = useMigrations(db, migrations);
+  const [appState, setAppState] = useState<AppState>('loading');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    if (!migrationsSuccess) return;
+
+    seedDatabase()
+      .then(() => setAppState('ready'))
+      .catch((e: Error) => {
+        console.error('[Seed] Échec :', e.message);
+        setErrorMessage(e.message);
+        setAppState('error');
+      });
+  }, [migrationsSuccess]);
+
+  useEffect(() => {
+    if (!migrationError) return;
+    console.error('[Migration] Échec :', migrationError.message);
+    setErrorMessage(migrationError.message);
+    setAppState('error');
+  }, [migrationError]);
+
+  if (appState === 'error') return <ErrorScreen message={errorMessage} />;
+  if (appState === 'loading') return <LoadingScreen />;
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
-      <StatusBar style="auto" />
     </ThemeProvider>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const styles = StyleSheet.create({
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  errorText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#EF4444',
+  },
+  errorDetail: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+});

@@ -1,0 +1,28 @@
+{
+    "common": {
+        "ok": "Eny",
+        "cancel": "Hiverina"
+    },
+    "auth": {
+        "login": "Hiditra",
+        "logout": "Hivoaka"
+    },
+    "settings": {
+        "title": "Fikiràna",
+        "theme": "Maody",
+        "language": "Fiteny",
+        "dark": "Maizina",
+        "light": "Mazava"
+    },
+    "home": {
+        "title": "Fandraisana",
+        "welcome": "Tongasoa ato amin'ny fampiharana"
+    },
+    "purchase": {
+        "title": "Hiantsena"
+    }
+    ,
+    "about": {
+        "title": "Fanazavana"
+    }
+}
