@@ -134,6 +134,25 @@ async function saveOptimizedPrice(
     .where(eq(panniers.id_pannier, id_pannier));
 }
 
+/**
+ * Persiste le state ('kept' | 'reduced' | 'removed') de chaque ligne
+ * dans shopping_list.state pour historiser le résultat de l'optimisation.
+ */
+async function saveShoppingListStates(
+  result: OptimizationResult,
+): Promise<void> {
+  const allLines = [...result.lines, ...result.removedItems];
+
+  await Promise.all(
+    allLines.map(line =>
+      db
+        .update(shoppingLists)
+        .set({ state: line.state })
+        .where(eq(shoppingLists.id_shopping, line.id_shopping))
+    )
+  );
+}
+
 // ─── Fonction principale ───────────────────────────────────────────────────────
 
 /**
@@ -161,8 +180,11 @@ export async function runOptimization(
   // 3. Lance l'algorithme B&B
   const result = calculateOptimalBasket(items, budget);
 
-  // 4. Persiste le prix optimisé dans la DB
-  await saveOptimizedPrice(id_pannier, result.totalCost);
+  // 4. Persiste le prix optimisé et les états dans la DB
+  await Promise.all([
+    saveOptimizedPrice(id_pannier, result.totalCost),
+    saveShoppingListStates(result),
+  ]);
 
   return result;
 }

@@ -1,37 +1,35 @@
 /**
  * src/algorithms/branchAndBound.ts
  *
- * Algorithme d'optimisation Branch & Bound pour "Aza Mirobaroba".
+ * Algorithme Branch & Bound — "Aza Mirobaroba"
  *
- * OBJECTIF : Trouver la combinaison (produit × vendeur × quantité) qui
- * maximise l'utilité du panier sans dépasser le budget disponible.
+ * CONTRAINTE ABSOLUE : coût final ≤ budget (jamais dépassé).
  *
- * STRATÉGIE EN 4 PHASES (fidèle à la documentation) :
+ * OBJECTIF : maximiser la valeur du panier (articles × qualité × quantité)
+ * sans jamais dépasser le budget. "Valeur" = articles de priorité haute
+ * conservés au meilleur prix disponible.
  *
- *   Phase 1 — Estimation au prix fort
- *     Calcule le coût total en prenant le prix le plus élevé par produit.
- *     → Garantit que le budget n'est jamais sous-estimé.
+ * PHASES :
+ *   1. Estimation au prix fort     → coût maximal théorique
+ *   2. Élagage par Rate            → retire les articles moins prioritaires
+ *                                    jusqu'à respecter le budget
+ *   3. Remontée vers le meilleur prix → pour chaque article gardé, si le
+ *                                    budget restant le permet, on privilégie
+ *                                    le vendeur de meilleure qualité/prix
+ *   4. Résultat                    → coût ≤ budget garanti
  *
- *   Phase 2 — Optimisation des vendeurs (avant toute suppression)
- *     Pour chaque produit avec plusieurs prix marqués, bascule vers
- *     le vendeur le moins cher. Si le budget devient respecté → terminé.
+ * SCENARIO DE VALIDATION :
+ *   Budget 20 000 Ar
+ *   vary@450 (qt10, rate1), vary@500 (qt10, rate1),
+ *   savony@1000 (qt3, rate4), ovy@2000 (qt1, rate2),
+ *   cahier@700 (qt5, rate5), montre@10000 (qt1, rate10)
  *
- *   Phase 3 — Branch & Bound (si budget encore dépassé)
- *     Explore un arbre de décision ordonné par Rate décroissant
- *     (les articles "Flexibilité" sont élagués en premier).
- *     Protection des Rate 1-2 (articles de "Survie").
- *
- *   Phase 4 — Résultat
- *     Retourne le panier optimal avec le détail par article :
- *     produit, vendeur choisi, prix retenu, quantité, state.
+ *   Attendu : montre retiré (rate10), vary@500 retenu (budget le permet)
+ *   Résultat : 5000+2000+3000+3500 = 13 500 Ar ≤ 20 000 ✓
  */
 
-// ─── Types d'entrée ────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-/**
- * Un relevé de prix tel qu'il existe dans market_prices,
- * enrichi du Rate de la catégorie du produit.
- */
 export type PriceEntry = {
   id_market:     number;
   id_product:    number;
@@ -39,47 +37,41 @@ export type PriceEntry = {
   price:         number;
   label_product: string;
   name_seller:   string;
-  rate:          number;   // Rate de la catégorie (1 = priorité max, 10 = min)
+  rate:          number;
   id_unit:       number | null;
   label_unit:    string | null;
 };
 
-/**
- * Un article de la liste de courses (shopping_list),
- * enrichi de ses prix marqués disponibles.
- */
 export type ShoppingItem = {
   id_shopping:        number;
   id_product:         number;
   label_product:      string;
   quantity_requested: number;
-  rate:               number;   // Rate hérité de la catégorie du produit
-  availablePrices:    PriceEntry[]; // Tous les prix marqués pour ce produit
+  rate:               number;
+  availablePrices:    PriceEntry[];
 };
-
-// ─── Types de sortie ───────────────────────────────────────────────────────────
 
 export type OptimizedLine = {
   id_shopping:   number;
   id_product:    number;
   label_product: string;
-  id_market:     number;        // Prix marqué retenu
-  name_seller:   string;        // Vendeur retenu
-  price:         number;        // Prix unitaire retenu
-  quantity:      number;        // Quantité finale (peut être réduite)
-  subtotal:      number;        // price × quantity
+  id_market:     number;
+  name_seller:   string;
+  price:         number;
+  quantity:      number;
+  subtotal:      number;
   state:         'kept' | 'reduced' | 'removed';
   rate:          number;
 };
 
 export type OptimizationResult = {
-  budget:          number;
-  totalCost:       number;      // Coût final du panier optimisé
-  savings:         number;      // Économies vs estimation au prix fort initiale
-  isWithinBudget:  boolean;
-  lines:           OptimizedLine[];
-  removedItems:    OptimizedLine[];  // Articles retirés du panier
-  phases:          PhaseLog[];       // Journal des phases pour debug/UI
+  budget:         number;
+  totalCost:      number;
+  savings:        number;
+  isWithinBudget: boolean;
+  lines:          OptimizedLine[];
+  removedItems:   OptimizedLine[];
+  phases:         PhaseLog[];
 };
 
 export type PhaseLog = {
@@ -90,29 +82,30 @@ export type PhaseLog = {
   actions:     string[];
 };
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Prix le plus bas parmi les relevés disponibles pour un produit. */
 function cheapestPrice(prices: PriceEntry[]): PriceEntry {
   return prices.reduce((min, p) => p.price < min.price ? p : min);
 }
 
-/** Prix le plus élevé parmi les relevés disponibles pour un produit. */
 function mostExpensivePrice(prices: PriceEntry[]): PriceEntry {
   return prices.reduce((max, p) => p.price > max.price ? p : max);
 }
 
-/** Calcule le coût total d'un ensemble de lignes. */
+/** Trie les prix du plus cher au moins cher. */
+function sortedByPriceDesc(prices: PriceEntry[]): PriceEntry[] {
+  return [...prices].sort((a, b) => b.price - a.price);
+}
+
 function totalOf(lines: OptimizedLine[]): number {
   return lines.reduce((sum, l) => sum + l.subtotal, 0);
 }
 
-/** Crée une OptimizedLine à partir d'un ShoppingItem et d'un PriceEntry choisi. */
 function makeLine(
-  item: ShoppingItem,
-  chosen: PriceEntry,
+  item:     ShoppingItem,
+  chosen:   PriceEntry,
   quantity: number,
-  state: OptimizedLine['state'],
+  state:    OptimizedLine['state'],
 ): OptimizedLine {
   return {
     id_shopping:   item.id_shopping,
@@ -128,28 +121,28 @@ function makeLine(
   };
 }
 
-// ─── Phase 1 : Estimation au prix fort ────────────────────────────────────────
+function maxAffordableQty(pricePerUnit: number, budgetRemaining: number): number {
+  if (pricePerUnit <= 0 || budgetRemaining < pricePerUnit) return 0;
+  return Math.floor(budgetRemaining / pricePerUnit);
+}
+
+// ─── Phase 1 : Estimation au prix fort ───────────────────────────────────────
 
 function phase1(items: ShoppingItem[]): {
   lines: OptimizedLine[];
   cost:  number;
   log:   PhaseLog;
 } {
-  const lines: OptimizedLine[] = items.map(item => {
-    const worst = mostExpensivePrice(item.availablePrices);
-    return makeLine(item, worst, item.quantity_requested, 'kept');
-  });
-
+  const lines = items.map(item =>
+    makeLine(item, mostExpensivePrice(item.availablePrices), item.quantity_requested, 'kept')
+  );
   const cost = totalOf(lines);
-
   return {
-    lines,
-    cost,
+    lines, cost,
     log: {
       phase: 1,
       description: 'Estimation au prix fort (pire cas)',
-      costBefore: cost,
-      costAfter:  cost,
+      costBefore: cost, costAfter: cost,
       actions: lines.map(l =>
         `${l.label_product} → ${l.name_seller} @ ${l.price.toLocaleString()} Ar × ${l.quantity}`
       ),
@@ -157,228 +150,232 @@ function phase1(items: ShoppingItem[]): {
   };
 }
 
-// ─── Phase 2 : Optimisation des vendeurs ──────────────────────────────────────
+// ─── Phase 2 : Élagage par Rate (retire du moins prioritaire au plus) ─────────
+//
+// Logique :
+//   1. Trie les articles par Rate décroissant (moins prioritaire = retiré en premier)
+//   2. Pour chaque article trop cher : retire complètement si Rate > 2,
+//      réduit la quantité si Rate 1-2
+//   3. S'arrête dès que le budget est respecté
+//
+// IMPORTANT : on travaille ici au prix MINIMUM pour chaque article,
+// car on veut savoir ce qui est absolument inabordable même au rabais.
+// La remontée vers le meilleur prix se fait en Phase 3.
 
-function phase2(
-  items:  ShoppingItem[],
-  lines:  OptimizedLine[],
-  budget: number,
-): {
-  lines:   OptimizedLine[];
+function phase2(items: ShoppingItem[], budget: number): {
+  kept:    ShoppingItem[];   // Articles conservés après élagage
+  removed: ShoppingItem[];   // Articles retirés
+  lines:   OptimizedLine[];  // Lignes finales (au prix min)
   cost:    number;
   log:     PhaseLog;
 } {
-  const costBefore = totalOf(lines);
   const actions: string[] = [];
 
-  // Bascule chaque produit vers son vendeur le moins cher
-  const optimized: OptimizedLine[] = lines.map((line, i) => {
-    const item    = items[i];
-    const cheapest = cheapestPrice(item.availablePrices);
-
-    if (cheapest.id_market !== line.id_market) {
-      const saving = (line.price - cheapest.price) * line.quantity;
-      actions.push(
-        `${line.label_product} : ${line.name_seller} → ${cheapest.name_seller}` +
-        ` (économie : ${saving.toLocaleString()} Ar)`
-      );
-      return makeLine(item, cheapest, line.quantity, 'kept');
-    }
-    return line;
+  // Trie : rate décroissant → à rate égal, plus coûteux d'abord
+  const sortedByRate = [...items].sort((a, b) => {
+    if (b.rate !== a.rate) return b.rate - a.rate; // Rate élevé = moins prioritaire → élagué en premier
+    // À rate égal : élaguer le MOINS cher en premier (préserve la meilleure valeur)
+    const costA = cheapestPrice(a.availablePrices).price * a.quantity_requested;
+    const costB = cheapestPrice(b.availablePrices).price * b.quantity_requested;
+    return costA - costB; // Ascendant : moins cher élagué en premier
   });
 
-  const costAfter = totalOf(optimized);
-
-  return {
-    lines: optimized,
-    cost:  costAfter,
-    log: {
-      phase: 2,
-      description: 'Optimisation des vendeurs (prix les moins chers)',
-      costBefore,
-      costAfter,
-      actions: actions.length > 0 ? actions : ['Tous les produits étaient déjà au meilleur prix'],
-    },
-  };
-}
-
-// ─── Phase 3 : Branch & Bound ─────────────────────────────────────────────────
-
-/**
- * Nœud de l'arbre de recherche.
- * Chaque nœud représente un état partiel du panier :
- * les items déjà décidés + les items restants à explorer.
- */
-type BnBNode = {
-  decided:   OptimizedLine[];   // Articles déjà traités dans ce sous-arbre
-  remaining: ShoppingItem[];    // Articles restants à explorer
-  cost:      number;            // Coût courant des decided
-};
-
-/**
- * Borne supérieure (upper bound) : si on garde tous les items restants
- * au prix minimal, quel serait le coût total ?
- * Permet d'élaguer les branches qui dépasseront forcément le budget.
- */
-function upperBound(node: BnBNode): number {
-  const remainingMin = node.remaining.reduce(
+  // Calcule le coût total au prix minimum pour tous les articles
+  let currentCost = sortedByRate.reduce(
     (sum, item) => sum + cheapestPrice(item.availablePrices).price * item.quantity_requested,
     0,
   );
-  return node.cost + remainingMin;
-}
 
-function phase3(
-  items:  ShoppingItem[],
-  lines:  OptimizedLine[],
-  budget: number,
-): {
-  lines:        OptimizedLine[];
-  removedItems: OptimizedLine[];
-  cost:         number;
-  log:          PhaseLog;
-} {
-  const costBefore = totalOf(lines);
-  const actions: string[] = [];
+  const keptItems   = new Map<number, { item: ShoppingItem; qty: number }>();
+  const removedItems: ShoppingItem[] = [];
 
-  // Trie les items par Rate décroissant (on élaguer les moins prioritaires d'abord)
-  // À Rate égal, on élimine en priorité les plus chers
-  const sorted = [...items].sort((a, b) => {
-    if (b.rate !== a.rate) return b.rate - a.rate; // Rate élevé = moins prioritaire
-    const priceA = cheapestPrice(a.availablePrices).price * a.quantity_requested;
-    const priceB = cheapestPrice(b.availablePrices).price * b.quantity_requested;
-    return priceB - priceA; // Plus cher en premier → libère plus de budget
-  });
+  // Initialise avec tous les articles à quantité demandée
+  sortedByRate.forEach(item =>
+    keptItems.set(item.id_shopping, { item, qty: item.quantity_requested })
+  );
 
-  // État initial : tous les items gardés au prix minimal
-  const initialLines: OptimizedLine[] = sorted.map(item => {
-    const cheapest = cheapestPrice(item.availablePrices);
-    return makeLine(item, cheapest, item.quantity_requested, 'kept');
-  });
+  // Élagage séquentiel — du moins prioritaire au plus prioritaire
+  for (const item of sortedByRate) {
+    if (currentCost <= budget) break; // Budget respecté → on s'arrête
 
-  // File de priorité (Best-First Search) — on explore les nœuds
-  // avec le coût le plus bas en premier
-  const root: BnBNode = {
-    decided:   [],
-    remaining: sorted,
-    cost:      0,
-  };
+    const cheapest  = cheapestPrice(item.availablePrices);
+    const entry     = keptItems.get(item.id_shopping)!;
+    const itemCost  = cheapest.price * entry.qty;
+    const excess    = currentCost - budget;
 
-  let bestSolution: OptimizedLine[] = initialLines;
-  let bestCost = totalOf(initialLines);
-
-  // Si même au prix minimal on dépasse, on va devoir retirer des items
-  const queue: BnBNode[] = [root];
-
-  while (queue.length > 0) {
-    // Prend le nœud avec le coût courant le plus bas
-    queue.sort((a, b) => a.cost - b.cost);
-    const node = queue.shift()!;
-
-    // Feuille : tous les items ont été décidés
-    if (node.remaining.length === 0) {
-      if (node.cost <= budget && node.cost > bestCost) {
-        bestCost     = node.cost;
-        bestSolution = node.decided;
+    if (item.rate > 2) {
+      // Non-survie : retrait complet si le coût total est ≥ excès,
+      // sinon retrait partiel
+      if (itemCost <= excess || entry.qty <= 1) {
+        // Retrait complet
+        keptItems.delete(item.id_shopping);
+        removedItems.push(item);
+        currentCost -= itemCost;
+        actions.push(
+          `✗ Retiré : ${item.label_product} (Rate ${item.rate})` +
+          ` — économie ${itemCost.toLocaleString()} Ar`
+        );
+      } else {
+        // Retrait partiel : réduit la quantité pour combler l'excès
+        const qtyToRemove = Math.min(entry.qty - 1, Math.ceil(excess / cheapest.price));
+        const newQty      = entry.qty - qtyToRemove;
+        keptItems.set(item.id_shopping, { item, qty: newQty });
+        currentCost -= cheapest.price * qtyToRemove;
+        actions.push(
+          `↓ Réduit : ${item.label_product} (Rate ${item.rate})` +
+          ` ${entry.qty} → ${newQty} unité(s)`
+        );
       }
-      continue;
-    }
-
-    // Élagage : si même la borne optimiste dépasse le budget → on abandonne
-    if (upperBound(node) > budget * 1.0) {
-      // On continue quand même car on cherche à maximiser, pas juste respecter
-    }
-
-    const [current, ...rest] = node.remaining;
-    const cheapest = cheapestPrice(current.availablePrices);
-
-    // ── Branche 1 : GARDER l'article au prix minimal ──────────────────────
-    const costWithItem = node.cost + cheapest.price * current.quantity_requested;
-    if (costWithItem <= budget) {
-      queue.push({
-        decided:   [...node.decided, makeLine(current, cheapest, current.quantity_requested, 'kept')],
-        remaining: rest,
-        cost:      costWithItem,
-      });
-    }
-
-    // ── Branche 2 : RÉDUIRE la quantité (si Rate ≥ 3 et quantité > 1) ────
-    if (current.rate >= 3 && current.quantity_requested > 1) {
-      const reducedQty  = Math.floor(current.quantity_requested / 2);
-      const costReduced = node.cost + cheapest.price * reducedQty;
-      if (costReduced <= budget && reducedQty > 0) {
-        queue.push({
-          decided:   [...node.decided, makeLine(current, cheapest, reducedQty, 'reduced')],
-          remaining: rest,
-          cost:      costReduced,
-        });
-      }
-    }
-
-    // ── Branche 3 : RETIRER l'article (interdit si Rate ≤ 2 = Survie) ───
-    if (current.rate > 2) {
-      queue.push({
-        decided:   [...node.decided, makeLine(current, cheapest, 0, 'removed')],
-        remaining: rest,
-        cost:      node.cost,
-      });
     } else {
-      // Article de survie (Rate 1-2) : on force son inclusion même si ça dépasse
-      // L'algorithme priorise sa présence absolue
-      actions.push(
-        `⚠ Article de survie protégé : ${current.label_product} (Rate ${current.rate})`
-      );
-      queue.push({
-        decided:   [...node.decided, makeLine(current, cheapest, current.quantity_requested, 'kept')],
-        remaining: rest,
-        cost:      costWithItem,
-      });
-    }
-
-    // Limite la taille de la queue pour éviter une explosion combinatoire
-    // (borne pratique : on garde les 500 meilleurs nœuds)
-    if (queue.length > 500) {
-      queue.sort((a, b) => a.cost - b.cost);
-      queue.splice(500);
+      // Survie (Rate 1-2) : réduit la quantité au maximum faisable
+      const maxQty = maxAffordableQty(cheapest.price, budget - (currentCost - itemCost));
+      if (maxQty <= 0) {
+        // Même 1 unité dépasse → retrait forcé (cas extrême)
+        keptItems.delete(item.id_shopping);
+        removedItems.push(item);
+        currentCost -= itemCost;
+        actions.push(
+          `⚠ Survie inabordable : ${item.label_product} (Rate ${item.rate})` +
+          ` — retiré faute de budget`
+        );
+      } else if (maxQty < entry.qty) {
+        keptItems.set(item.id_shopping, { item, qty: maxQty });
+        currentCost -= cheapest.price * (entry.qty - maxQty);
+        actions.push(
+          `↓ Survie réduite : ${item.label_product} (Rate ${item.rate})` +
+          ` ${entry.qty} → ${maxQty} unité(s) (budget contraint)`
+        );
+      }
     }
   }
 
-  // Reconstruit la solution finale
-  const kept    = bestSolution.filter(l => l.state !== 'removed');
-  const removed = bestSolution.filter(l => l.state === 'removed');
+  // Reconstruit les lignes au prix minimum
+  const lines: OptimizedLine[] = [];
+  for (const [, { item, qty }] of keptItems) {
+    const cheapest = cheapestPrice(item.availablePrices);
+    const original = item.quantity_requested;
+    const state: OptimizedLine['state'] = qty < original ? 'reduced' : 'kept';
+    lines.push(makeLine(item, cheapest, qty, state));
+  }
 
-  removed.forEach(l => {
-    actions.push(`✗ Retiré : ${l.label_product} (Rate ${l.rate}) — libère ${l.subtotal.toLocaleString()} Ar`);
-  });
-  bestSolution.filter(l => l.state === 'reduced').forEach(l => {
-    actions.push(`↓ Réduit : ${l.label_product} → ${l.quantity} unité(s)`);
-  });
-
-  const costAfter = totalOf(kept);
+  const keptShoppingItems = [...keptItems.values()].map(({ item, qty }) => ({
+    ...item,
+    quantity_requested: qty,
+  }));
 
   return {
-    lines:        kept,
-    removedItems: removed,
-    cost:         costAfter,
+    kept:    keptShoppingItems,
+    removed: removedItems,
+    lines,
+    cost:    totalOf(lines),
     log: {
-      phase: 3,
-      description: 'Branch & Bound (élagage par priorité Rate)',
-      costBefore,
-      costAfter,
-      actions: actions.length > 0 ? actions : ['Aucun article retiré nécessaire'],
+      phase: 2,
+      description: 'Élagage par priorité (Rate décroissant)',
+      costBefore: items.reduce(
+        (sum, i) => sum + cheapestPrice(i.availablePrices).price * i.quantity_requested, 0
+      ),
+      costAfter: totalOf(lines),
+      actions: actions.length > 0 ? actions : ['Tous les articles tiennent dans le budget'],
     },
   };
 }
 
-// ─── Fonction principale ───────────────────────────────────────────────────────
+// ─── Phase 3 : Remontée vers le meilleur prix disponible ─────────────────────
+//
+// Après l'élagage, on sait exactement quels articles sont conservés et en
+// quelle quantité. Le budget restant permet peut-être d'acheter certains
+// articles chez un vendeur plus cher (meilleure qualité).
+//
+// On parcourt les articles du PLUS prioritaire (rate faible) au moins
+// prioritaire et on essaie de les "upgrader" vers le prix le plus élevé
+// que le budget restant peut absorber.
+//
+// C'est ici que vary@450 vs vary@500 est résolu :
+//   Budget restant après retrait montre = 20000 - 3000 - 2000 - 3500 = 11500
+//   vary@500 × 10 = 5000 ≤ 11500 → on garde vary@500 ✓
 
-/**
- * calculateOptimalBasket
- *
- * @param items   - Articles de la liste de courses avec leurs prix marqués
- * @param budget  - Budget total disponible en Ariary
- * @returns       - Résultat complet de l'optimisation
- */
+function phase3(
+  keptItems: ShoppingItem[],
+  removedLines: OptimizedLine[],
+  p2Lines: OptimizedLine[],
+  budget: number,
+): {
+  lines: OptimizedLine[];
+  cost:  number;
+  log:   PhaseLog;
+} {
+  const costBefore = totalOf(p2Lines);
+  const actions: string[]    = [];
+
+  // Trie du plus prioritaire au moins prioritaire pour upgrader en priorité
+  // les articles essentiels
+  const sortedByPriorityAsc = [...keptItems].sort((a, b) => a.rate - b.rate);
+
+  // Calcule le budget consommé par les articles NON-upgradables
+  // (ceux qu'on ne peut pas changer de vendeur = 1 seul prix disponible)
+  let budgetUsed = p2Lines.reduce((sum, l) => sum + l.subtotal, 0);
+  const finalLines = new Map<number, OptimizedLine>();
+  p2Lines.forEach(l => finalLines.set(l.id_shopping, l));
+
+  // Tente d'upgrader chaque article vers le prix le plus élevé faisable
+  for (const item of sortedByPriorityAsc) {
+    const currentLine = finalLines.get(item.id_shopping);
+    if (!currentLine) continue;
+
+    const qty            = currentLine.quantity;
+    const currentSubtotal = currentLine.subtotal;
+
+    // Budget disponible si on libère le coût actuel de cet article
+    const budgetForThisItem = budget - (budgetUsed - currentSubtotal);
+
+    // Cherche le meilleur prix (le plus élevé) que le budget peut absorber
+    // "meilleur" = on préfère un vendeur de confiance / prix plus élevé si on peut
+    const affordablePrices = sortedByPriceDesc(item.availablePrices)
+      .filter(p => p.price * qty <= budgetForThisItem);
+
+    if (affordablePrices.length === 0) continue;
+
+    const bestAffordable = affordablePrices[0]; // Le plus cher qu'on peut se permettre
+
+    if (bestAffordable.id_market !== currentLine.id_market) {
+      const diff = (bestAffordable.price - currentLine.price) * qty;
+      actions.push(
+        `↑ Upgrade : ${item.label_product}` +
+        ` ${currentLine.name_seller} (${currentLine.price} Ar)` +
+        ` → ${bestAffordable.name_seller} (${bestAffordable.price} Ar)` +
+        ` +${diff.toLocaleString()} Ar`
+      );
+      const upgradedLine = makeLine(item, bestAffordable, qty, currentLine.state);
+      finalLines.set(item.id_shopping, upgradedLine);
+      budgetUsed = budgetUsed - currentSubtotal + upgradedLine.subtotal;
+    }
+  }
+
+  const lines    = [...finalLines.values()];
+  const costAfter = totalOf(lines);
+
+  // Assertion de sécurité
+  if (costAfter > budget) {
+    throw new Error(
+      `[Phase3] Violation budgétaire : ${costAfter} > ${budget}`
+    );
+  }
+
+  return {
+    lines, cost: costAfter,
+    log: {
+      phase: 3,
+      description: 'Remontée vers le meilleur prix faisable',
+      costBefore, costAfter,
+      actions: actions.length > 0
+        ? actions
+        : ['Aucun upgrade possible — prix actuels déjà optimaux'],
+    },
+  };
+}
+
+// ─── Fonction principale ──────────────────────────────────────────────────────
+
 export function calculateOptimalBasket(
   items:  ShoppingItem[],
   budget: number,
@@ -386,72 +383,78 @@ export function calculateOptimalBasket(
 
   if (items.length === 0 || budget <= 0) {
     return {
-      budget,
-      totalCost:      0,
-      savings:        0,
+      budget, totalCost: 0, savings: 0,
       isWithinBudget: true,
-      lines:          [],
-      removedItems:   [],
-      phases:         [],
+      lines: [], removedItems: [], phases: [],
     };
   }
 
-  // Filtre les items sans prix marqués (ne peuvent pas être optimisés)
   const validItems = items.filter(i => i.availablePrices.length > 0);
-
   const phases: PhaseLog[] = [];
 
-  // ── Phase 1 : Coût au prix fort ──────────────────────────────────────────
+  // ── Phase 1 ──────────────────────────────────────────────────────────────
   const p1 = phase1(validItems);
   phases.push(p1.log);
   const initialCost = p1.cost;
 
-  // Si le budget est respecté dès le prix fort → aucune optimisation nécessaire
+  // Budget respecté dès le prix fort → Phase 3 directement
+  // (pas d'élagage, mais on peut quand même optimiser les vendeurs)
   if (initialCost <= budget) {
+    // Tente d'upgrader dans le budget disponible (toujours au prix fort ici)
+    const p3Direct = phase3(validItems, [], p1.lines, budget);
+    if (p3Direct.log.actions.length > 1 || p3Direct.log.actions[0] !== 'Aucun upgrade possible — prix actuels déjà optimaux') {
+      phases.push(p3Direct.log);
+    }
+    const finalLines = p3Direct.log.actions[0] !== 'Aucun upgrade possible — prix actuels déjà optimaux'
+      ? p3Direct.lines
+      : p1.lines;
+
+    phases.push({
+      phase: 4, description: 'Résultat final',
+      costBefore: initialCost, costAfter: totalOf(finalLines),
+      actions: [
+        `Budget : ${budget.toLocaleString()} Ar`,
+        `Coût : ${totalOf(finalLines).toLocaleString()} Ar`,
+        'Le panier complet tient dans le budget.',
+      ],
+    });
     return {
-      budget,
-      totalCost:      initialCost,
-      savings:        0,
+      budget, totalCost: totalOf(finalLines), savings: 0,
       isWithinBudget: true,
-      lines:          p1.lines,
-      removedItems:   [],
-      phases,
+      lines: finalLines, removedItems: [], phases,
     };
   }
 
-  // ── Phase 2 : Optimisation des vendeurs ──────────────────────────────────
-  const p2 = phase2(validItems, p1.lines, budget);
+  // ── Phase 2 : Élagage ────────────────────────────────────────────────────
+  const p2 = phase2(validItems, budget);
   phases.push(p2.log);
 
-  if (p2.cost <= budget) {
-    return {
-      budget,
-      totalCost:      p2.cost,
-      savings:        initialCost - p2.cost,
-      isWithinBudget: true,
-      lines:          p2.lines,
-      removedItems:   [],
-      phases,
-    };
-  }
+  // Construit les lignes des articles retirés
+  const removedLines: OptimizedLine[] = p2.removed.map(item =>
+    makeLine(item, cheapestPrice(item.availablePrices), 0, 'removed')
+  );
 
-  // ── Phase 3 : Branch & Bound ─────────────────────────────────────────────
-  const p3 = phase3(validItems, p2.lines, budget);
+  // ── Phase 3 : Remontée vers le meilleur prix ──────────────────────────────
+  const p3 = phase3(p2.kept, removedLines, p2.lines, budget);
   phases.push(p3.log);
 
-  // ── Phase 4 : Résultat final ─────────────────────────────────────────────
   const finalCost = p3.cost;
+
+  // Assertion finale
+  if (finalCost > budget) {
+    throw new Error(`[B&B] Violation budgétaire finale : ${finalCost} > ${budget}`);
+  }
+
   phases.push({
-    phase: 4,
-    description: 'Résultat final',
-    costBefore:  p3.cost,
-    costAfter:   finalCost,
+    phase: 4, description: 'Résultat final',
+    costBefore: p3.cost, costAfter: finalCost,
     actions: [
       `Budget : ${budget.toLocaleString()} Ar`,
       `Coût final : ${finalCost.toLocaleString()} Ar`,
       `Économies : ${(initialCost - finalCost).toLocaleString()} Ar`,
       `Articles conservés : ${p3.lines.length}`,
-      `Articles retirés : ${p3.removedItems.length}`,
+      `Articles retirés : ${removedLines.length}`,
+      `✓ Budget respecté`,
     ],
   });
 
@@ -461,7 +464,7 @@ export function calculateOptimalBasket(
     savings:        initialCost - finalCost,
     isWithinBudget: finalCost <= budget,
     lines:          p3.lines,
-    removedItems:   p3.removedItems,
+    removedItems:   removedLines,
     phases,
   };
 }

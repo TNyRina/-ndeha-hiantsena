@@ -13,6 +13,7 @@ import {
   Category, Unit, Seller, Product, Pannier,
   MarketPriceWithDetails, ShoppingListWithDetails,
 } from '@/src/services/purchaseService';
+import { runOptimization, OptimizationResult } from '@/src/services/optimizationService';
 
 export type ModalType =
   | 'pannier'
@@ -36,9 +37,11 @@ export function usePurchase() {
   const [activePannier, setActivePannier] = useState<Pannier | null>(null);
 
   // ── UI state ────────────────────────────────────────────────────────────────
-  const [activeModal, setActiveModal] = useState<ModalType>(null);
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
+  const [activeModal,        setActiveModal]        = useState<ModalType>(null);
+  const [loading,            setLoading]            = useState(false);
+  const [error,              setError]              = useState<string | null>(null);
+  const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
+  const [optimizing,         setOptimizing]         = useState(false);
 
   // ── Chargement initial ──────────────────────────────────────────────────────
   const loadReferentials = useCallback(async () => {
@@ -177,6 +180,29 @@ export function usePurchase() {
     finally { setLoading(false); }
   }, [activePannier]);
 
+  const handleOptimize = useCallback(async () => {
+    if (!activePannier) return;
+    setOptimizing(true);
+    try {
+      // Passe le budget du panier actif à l'algorithme
+      const result = await runOptimization(
+        activePannier.id_pannier,
+        activePannier.budget,
+      );
+      setOptimizationResult(result);
+
+      // Met à jour optimized_price dans le state local
+      setActivePannier(prev =>
+        prev ? { ...prev, optimized_price: result.totalCost } : null
+      );
+
+      // Recharge la liste (les states 'kept'/'reduced'/'removed' sont persistés)
+      const items = await fetchShoppingListByPannier(activePannier.id_pannier);
+      setShoppingItems(items);
+    } catch (e: any) { setError(e.message); }
+    finally { setOptimizing(false); }
+  }, [activePannier]);
+
   return {
     // Données
     categories, units, sellers, products,
@@ -193,5 +219,9 @@ export function usePurchase() {
     handleCreateMarketPrice,
     handleAddToShoppingList,
     handleRemoveFromShoppingList,
+    handleOptimize,
+    optimizationResult,
+    setOptimizationResult,
+    optimizing,
   };
 }
