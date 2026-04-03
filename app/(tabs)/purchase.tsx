@@ -9,10 +9,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  ShoppingCart, Plus, Trash2, Sparkles,
-  Wallet, Tag, Store, BarChart2, ChevronDown,
-  CheckCircle2, XCircle, ArrowDownCircle,
-  TrendingDown, X, ChevronRight, AlertTriangle,
+  ShoppingCart, Plus, Trash2, Sparkles, Wallet,
+  Tag, Store, BarChart2, ChevronDown, ChevronRight,
+  CheckCircle2, XCircle, ArrowDownCircle, TrendingUp,
+  TrendingDown, X, AlertTriangle, Package,
 } from 'lucide-react-native';
 import { useTheme } from '@/styles/theme';
 import { useTranslation } from 'react-i18next';
@@ -22,17 +22,10 @@ import {
   PannierModal, ProductModal, SellerModal,
   MarketPriceModal, ShoppingListModal,
 } from '@/src/components/purchase/Modals';
-import {
-  ShoppingListWithDetails,
-  Pannier,
-} from '@/src/services/purchaseService';
-import {
-  OptimizationResult,
-  OptimizedLine,
-  PhaseLog,
-} from '@/src/algorithm/branchAndBound';
+import { ShoppingListWithDetails, Pannier } from '@/src/services/purchaseService';
+import { OptimizationResult, OptimizedLine, PhaseLog } from '@/src/algorithm/branchAndBound';
 
-// ─── Calcul du coût total sécurisé (prix max par produit) ─────────────────────
+// ─── Calcul du coût total sécurisé ────────────────────────────────────────────
 
 function computeSecureTotalCost(items: ShoppingListWithDetails[]): number {
   const byProduct = new Map<number, { maxPrice: number; quantity: number }>();
@@ -53,11 +46,70 @@ function computeSecureTotalCost(items: ShoppingListWithDetails[]): number {
   return total;
 }
 
-// ─── Composant : Carte Panier actif ───────────────────────────────────────────
+// ─── Badge d'état d'optimisation ──────────────────────────────────────────────
+//
+// Affiché sur chaque ligne de la shopping list APRÈS une optimisation.
+// Indique visuellement ce que l'algorithme a fait à cet article.
 
-function ActivePannierCard({
-  pannier, onChangeBudget, onSwitch, theme,
-}: {
+type ItemState = 'kept' | 'reduced' | 'removed' | 'boosted' | 'upgraded';
+
+function StateBadge({ state, qty, originalQty, theme }: {
+  state:       ItemState;
+  qty?:        number;
+  originalQty?: number;
+  theme:       ReturnType<typeof useTheme>;
+}) {
+  const c = theme.colors;
+
+  const config: Record<ItemState, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
+    kept: {
+      color: c.success, bg: c.surface,
+      icon: <CheckCircle2 size={11} color={c.success} strokeWidth={2.5} />,
+      label: 'Conservé',
+    },
+    reduced: {
+      color: c.warning, bg: c.backgroundMuted,
+      icon: <ArrowDownCircle size={11} color={c.warning} strokeWidth={2.5} />,
+      label: originalQty ? `${originalQty} → ${qty}` : 'Réduit',
+    },
+    removed: {
+      color: c.danger, bg: c.backgroundMuted,
+      icon: <XCircle size={11} color={c.danger} strokeWidth={2.5} />,
+      label: 'Retiré',
+    },
+    boosted: {
+      color: c.accent.primary, bg: c.surface,
+      icon: <TrendingUp size={11} color={c.accent.primary} strokeWidth={2.5} />,
+      label: originalQty ? `+${(qty ?? 0) - originalQty}` : 'Augmenté',
+    },
+    upgraded: {
+      color: c.accent.primary, bg: c.surface,
+      icon: <TrendingUp size={11} color={c.accent.primary} strokeWidth={2.5} />,
+      label: 'Meilleur prix',
+    },
+  };
+
+  const cfg = config[state];
+  return (
+    <View style={[sb.badge, { backgroundColor: cfg.bg, borderColor: cfg.color + '44' }]}>
+      {cfg.icon}
+      <Text style={[sb.badgeText, { color: cfg.color }]}>{cfg.label}</Text>
+    </View>
+  );
+}
+
+const sb = StyleSheet.create({
+  badge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 6, paddingVertical: 3,
+    borderRadius: 6, borderWidth: 1,
+  },
+  badgeText: { fontSize: 10, fontWeight: '700' },
+});
+
+// ─── Carte Panier actif ────────────────────────────────────────────────────────
+
+function ActivePannierCard({ pannier, onChangeBudget, onSwitch, theme }: {
   pannier: Pannier | null;
   onChangeBudget: (b: number) => void;
   onSwitch: () => void;
@@ -86,6 +138,7 @@ function ActivePannierCard({
 
   return (
     <View style={[s.pannierCard, { backgroundColor: c.accent.primary }]}>
+      {/* <View style={s.circle1} /><View style={s.circle2} /> */}
       <View style={s.pannierCardRow}>
         <View style={{ flex: 1 }}>
           <Text style={s.pannierLabel}>Votre panier</Text>
@@ -111,7 +164,9 @@ function ActivePannierCard({
         ) : (
           <TouchableOpacity onPress={() => { setBudgetStr(String(pannier.budget)); setEditing(true); }}>
             <Text style={s.budgetValue}>
-              {pannier.budget > 0 ? `${pannier.budget.toLocaleString()} Ar` : 'Appuyer pour définir'}
+              {pannier.budget > 0
+                ? `${pannier.budget.toLocaleString()} Ar`
+                : 'Appuyer pour définir'}
             </Text>
           </TouchableOpacity>
         )}
@@ -120,90 +175,290 @@ function ActivePannierCard({
   );
 }
 
-// ─── Composant : Ligne de la shopping list ────────────────────────────────────
+// ─── Ligne shopping list avec état d'optimisation ────────────────────────────
+//
+// Sources d'état (par ordre de priorité) :
+//   1. optimizedLine  — résultat en mémoire (juste après l'optimisation)
+//   2. item.state     — état persisté en DB (après rechargement de l'app)
+//   3. null           — aucune optimisation effectuée
 
-function ShoppingItemRow({ item, onDelete, theme }: {
-  item: ShoppingListWithDetails;
-  onDelete: () => void;
-  theme: ReturnType<typeof useTheme>;
+function resolveItemState(
+  item:          ShoppingListWithDetails,
+  optimizedLine: OptimizedLine | null | undefined,
+): {
+  itemState:    ItemState | null;
+  displayQty:   number;
+  displayPrice: number | null;
+  origQty:      number;
+} {
+  const origQty     = item.quantity_requested;
+  let displayQty    = origQty;
+  let displayPrice  = item.price;
+  let itemState: ItemState | null = null;
+
+  if (optimizedLine) {
+    // Source 1 : résultat frais de l'algorithme (priorité maximale)
+    const optQty = optimizedLine.quantity;
+    if (optimizedLine.state === 'removed') {
+      itemState = 'removed';
+    } else if (optQty > origQty) {
+      itemState  = 'boosted';
+      displayQty = optQty;
+    } else if (optQty < origQty) {
+      itemState  = 'reduced';
+      displayQty = optQty;
+    } else if (optimizedLine.price !== (item.price ?? 0)) {
+      itemState    = 'upgraded';
+      displayPrice = optimizedLine.price;
+    } else {
+      itemState = 'kept';
+    }
+  } else if (item.state) {
+    // Source 2 : état persisté en DB (après rechargement)
+    // Le champ state en DB stocke :
+    //   'kept'    → conservé
+    //   'reduced' → quantité réduite
+    //   'removed' → retiré
+    //   'boosted' → quantité augmentée (Phase 4)
+    //   'pending' → pas encore optimisé
+    switch (item.state) {
+      case 'removed':
+        itemState = 'removed';
+        break;
+      case 'reduced':
+        itemState = 'reduced';
+        break;
+      case 'boosted':
+        itemState  = 'boosted';
+        // La qty en DB reflète déjà la quantité boostée (quantity_requested mis à jour)
+        break;
+      case 'kept':
+        itemState = 'kept';
+        break;
+      // 'pending' ou null = pas encore optimisé → pas de badge
+    }
+  }
+
+  return { itemState, displayQty, displayPrice, origQty };
+}
+
+function ShoppingItemRow({ item, optimizedLine, onDelete, theme }: {
+  item:          ShoppingListWithDetails;
+  optimizedLine?: OptimizedLine | null;
+  onDelete:      () => void;
+  theme:         ReturnType<typeof useTheme>;
 }) {
   const c = theme.colors;
+
+  const { itemState, displayQty, displayPrice, origQty } =
+    resolveItemState(item, optimizedLine);
+
+  const isRemoved  = itemState === 'removed';
+  const isBoosted  = itemState === 'boosted';
+  const isReduced  = itemState === 'reduced';
+  const isUpgraded = itemState === 'upgraded';
+  const isKept     = itemState === 'kept';
+
+  const borderColor = isRemoved  ? c.danger  + '55'
+                    : isBoosted  ? c.accent.primary  + '55'
+                    : isReduced  ? c.warning + '55'
+                    : isUpgraded ? c.accent.primary  + '33'
+                    : isKept     ? c.success + '33'
+                    : c.borderStrong;
+
+  const rowBg = isRemoved ? c.backgroundMuted : c.surface;
+
   return (
-    <View style={[s.shoppingRow, { backgroundColor: c.surface, borderColor: c.borderStrong }]}>
+    <View style={[
+      s.shoppingRow,
+      { backgroundColor: rowBg, borderColor },
+      isRemoved && { opacity: 0.5 },
+    ]}>
+      {/* Barre colorée gauche (indicateur état) */}
+      {itemState && (
+        <View style={[s.shoppingStateBar, {
+          backgroundColor: isRemoved  ? c.danger
+                         : isBoosted  ? c.accent.primary
+                         : isReduced  ? c.warning
+                         : isUpgraded ? c.accent.primary
+                         : c.success,
+        }]} />
+      )}
+
+      {/* Icône produit */}
       <View style={[s.shoppingIcon, { backgroundColor: c.backgroundMuted }]}>
-        <Tag size={14} color={c.accent.primary} />
+        <Tag size={14} color={isRemoved ? c.text.muted : c.accent.primary} />
       </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[s.shoppingProduct, { color: c.text.primary }]}>
-          {item.label_product ?? '—'}
-        </Text>
-        <Text style={[s.shoppingSeller, { color: c.text.secondary }]}>
-          {item.name_seller ?? '—'} · {item.price?.toLocaleString()} Ar
+
+      {/* Info produit */}
+      <View style={{ flex: 1, gap: 2, paddingVertical: 10 }}>
+        {/* Ligne 1 : nom + badge */}
+        <View style={s.shoppingTopRow}>
+          <Text style={[
+            s.shoppingProduct,
+            { color: isRemoved ? c.text.muted : c.text.primary, flex: 1 },
+            isRemoved && { textDecorationLine: 'line-through' },
+          ]} numberOfLines={1}>
+            {item.label_product ?? '—'}
+          </Text>
+          {itemState && itemState !== 'kept' && (
+            <StateBadge
+              state={itemState}
+              qty={displayQty}
+              originalQty={origQty}
+              theme={theme}
+            />
+          )}
+        </View>
+
+        {/* Ligne 2 : vendeur · prix */}
+        <Text style={[s.shoppingSeller, {
+          color: isRemoved ? c.text.muted : c.text.secondary,
+        }]}>
+          {optimizedLine?.name_seller ?? item.name_seller ?? '—'}
+          {' · '}
+          {(displayPrice ?? 0).toLocaleString()} Ar
+          {/* Indication du changement de prix si upgraded */}
+          {isUpgraded && item.price && (
+            <Text style={{ color: c.text.muted }}>
+              {' '}(était {item.price.toLocaleString()} Ar)
+            </Text>
+          )}
         </Text>
       </View>
-      <Text style={[s.shoppingQty, { color: c.accent.primary }]}>×{item.quantity_requested}</Text>
-      <TouchableOpacity onPress={onDelete} hitSlop={8} style={{ marginLeft: 8 }}>
-        <Trash2 size={16} color={c.danger} strokeWidth={2} />
+
+      {/* Quantité — avec ancienne valeur barrée si réduite */}
+      <View style={s.shoppingQtyWrap}>
+        {isReduced && optimizedLine && (
+          <Text style={[s.shoppingQtyOrig, { color: c.text.muted }]}>
+            ×{origQty}
+          </Text>
+        )}
+        <Text style={[s.shoppingQty, {
+          color: isRemoved  ? c.text.muted
+               : isBoosted  ? c.accent.primary
+               : isReduced  ? c.warning
+               : c.accent.primary,
+        }]}>
+          ×{displayQty}
+        </Text>
+      </View>
+
+      {/* Sous-total */}
+      {!isRemoved && (
+        <Text style={[s.shoppingSubtotal, { color: c.text.secondary }]}>
+          {((displayPrice ?? 0) * displayQty).toLocaleString()}
+        </Text>
+      )}
+
+      {/* Bouton suppression */}
+      <TouchableOpacity onPress={onDelete} hitSlop={8} style={{ marginLeft: 4 }}>
+        <Trash2 size={15} color={c.danger} strokeWidth={2} />
       </TouchableOpacity>
     </View>
   );
 }
 
-// ─── Composant : Ligne de résultat d'optimisation ────────────────────────────
+// ─── Ligne résultat modal ──────────────────────────────────────────────────────
 
-function OptimizedLineRow({ line, theme }: {
-  line: OptimizedLine;
-  theme: ReturnType<typeof useTheme>;
+function OptimizedLineRow({ line, originalQty, theme }: {
+  line:        OptimizedLine;
+  originalQty: number;  // quantité demandée initialement
+  theme:       ReturnType<typeof useTheme>;
 }) {
   const c = theme.colors;
 
-  const stateConfig = {
-    kept:    { icon: <CheckCircle2 size={16} color={c.success}  strokeWidth={2.5} />, label: 'Conservé',  bg: c.surface },
-    reduced: { icon: <ArrowDownCircle size={16} color={c.warning} strokeWidth={2.5} />, label: 'Réduit',    bg: c.surface },
-    removed: { icon: <XCircle size={16} color={c.danger}  strokeWidth={2.5} />, label: 'Retiré',    bg: c.backgroundMuted },
-  }[line.state];
+  const isBoosted  = line.quantity > originalQty;
+  const isReduced  = line.state === 'reduced';
+  const isRemoved  = line.state === 'removed';
+  const isUpgraded = line.state === 'kept' && !isBoosted;
 
-  const isRemoved = line.state === 'removed';
+  // Couleur de bordure gauche selon état
+  const accentColor = isRemoved  ? c.danger
+                    : isReduced  ? c.warning
+                    : isBoosted  ? c.accent.primary
+                    : c.success;
 
   return (
     <View style={[
       s.resultRow,
-      { backgroundColor: stateConfig.bg, borderColor: c.borderStrong },
-      isRemoved && { opacity: 0.5 },
+      { backgroundColor: c.surface, borderColor: c.borderStrong },
+      isRemoved && { opacity: 0.5, backgroundColor: c.backgroundMuted },
     ]}>
-      <View style={s.resultLeft}>
-        {stateConfig.icon}
-        <View style={{ flex: 1 }}>
-          <Text style={[s.resultProduct, { color: c.text.primary, textDecorationLine: isRemoved ? 'line-through' : 'none' }]}>
+      {/* Barre colorée gauche */}
+      <View style={[s.resultAccentBar, { backgroundColor: accentColor }]} />
+
+      <View style={s.resultBody}>
+        {/* Ligne 1 : nom + badge + sous-total */}
+        <View style={s.resultTopRow}>
+          <Text style={[
+            s.resultProduct,
+            { color: isRemoved ? c.text.muted : c.text.primary, flex: 1 },
+            isRemoved && { textDecorationLine: 'line-through' },
+          ]} numberOfLines={1}>
             {line.label_product}
           </Text>
+
+          {/* Badge état */}
+          <StateBadge
+            state={isRemoved ? 'removed' : isReduced ? 'reduced' : isBoosted ? 'boosted' : 'kept'}
+            qty={line.quantity}
+            originalQty={originalQty}
+            theme={theme}
+          />
+
           {!isRemoved && (
-            <Text style={[s.resultSeller, { color: c.text.secondary }]}>
-              {line.name_seller} · {line.price.toLocaleString()} Ar × {line.quantity}
+            <Text style={[s.resultSubtotal, { color: accentColor }]}>
+              {line.subtotal.toLocaleString()} Ar
             </Text>
           )}
         </View>
+
+        {/* Ligne 2 : vendeur + prix + quantité */}
+        {!isRemoved && (
+          <View style={s.resultBottomRow}>
+            <Text style={[s.resultSeller, { color: c.text.secondary }]}>
+              {line.name_seller}
+            </Text>
+            <Text style={[s.resultPriceQty, { color: c.text.secondary }]}>
+              {line.price.toLocaleString()} Ar
+              {' × '}
+              {/* Affiche qty originale barrée si réduite */}
+              {isReduced && (
+                <Text style={{ textDecorationLine: 'line-through', color: c.text.muted }}>
+                  {originalQty}
+                </Text>
+              )}
+              {isReduced ? ` ${line.quantity}` : ` ${line.quantity}`}
+              {isBoosted && (
+                <Text style={{ color: c.accent.primary, fontWeight: '700' }}>
+                  {` (+${line.quantity - originalQty})`}
+                </Text>
+              )}
+            </Text>
+          </View>
+        )}
       </View>
-      {!isRemoved && (
-        <Text style={[s.resultSubtotal, { color: c.accent.primary }]}>
-          {line.subtotal.toLocaleString()} Ar
-        </Text>
-      )}
     </View>
   );
 }
 
-// ─── Composant : Phase log (accordéon) ───────────────────────────────────────
+// ─── Phase log accordéon ──────────────────────────────────────────────────────
 
-function PhaseLogRow({ log, theme }: {
-  log: PhaseLog;
-  theme: ReturnType<typeof useTheme>;
-}) {
+function PhaseLogRow({ log, theme }: { log: PhaseLog; theme: ReturnType<typeof useTheme> }) {
   const c = theme.colors;
   const [open, setOpen] = useState(false);
 
-  const phaseColors = ['', c.text.secondary, c.accent.primary, c.warning, c.success];
-  const phaseLabels = ['', 'Prix fort', 'Vendeurs', 'Branch & Bound', 'Résultat'];
+  // Labels et couleurs mis à jour pour correspondre aux 4 phases réelles
+  const phaseConfig: Record<number, { label: string; color: string }> = {
+    1: { label: 'Prix fort',      color: c.text.secondary },
+    2: { label: 'Élagage',        color: c.danger        },
+    3: { label: 'Upgrade',        color: c.accent.primary        },
+    4: { label: 'Redistribution', color: c.success       },
+  };
+  const cfg = phaseConfig[log.phase] ?? { label: `Phase ${log.phase}`, color: c.text.secondary };
+
+  const saving = log.costBefore - log.costAfter;
 
   return (
     <TouchableOpacity
@@ -212,15 +467,15 @@ function PhaseLogRow({ log, theme }: {
       activeOpacity={0.8}
     >
       <View style={s.phaseHeader}>
-        <View style={[s.phaseBadge, { backgroundColor: c.backgroundMuted }]}>
-          <Text style={[s.phaseBadgeText, { color: phaseColors[log.phase] }]}>
-            {phaseLabels[log.phase]}
-          </Text>
+        <View style={[s.phaseBadge, { backgroundColor: cfg.color + '22', borderColor: cfg.color + '44' }]}>
+          <Text style={[s.phaseBadgeText, { color: cfg.color }]}>{cfg.label}</Text>
         </View>
         <View style={{ flex: 1 }}>
           <Text style={[s.phaseDesc, { color: c.text.primary }]}>{log.description}</Text>
-          <Text style={[s.phaseSaving, { color: c.text.secondary }]}>
+          <Text style={[s.phaseSaving, { color: saving > 0 ? c.success : c.text.secondary }]}>
             {log.costBefore.toLocaleString()} → {log.costAfter.toLocaleString()} Ar
+            {saving > 0 && `  (-${saving.toLocaleString()} Ar)`}
+            {saving < 0 && `  (+${Math.abs(saving).toLocaleString()} Ar)`}
           </Text>
         </View>
         <ChevronRight
@@ -230,8 +485,10 @@ function PhaseLogRow({ log, theme }: {
       </View>
       {open && (
         <View style={[s.phaseActions, { borderTopColor: c.border }]}>
-          {log.actions.map((a, i) => (
-            <Text key={i} style={[s.phaseAction, { color: c.text.secondary }]}>• {a}</Text>
+          {log.actions.map((action, i) => (
+            <Text key={i} style={[s.phaseAction, { color: c.text.secondary }]}>
+              {action}
+            </Text>
           ))}
         </View>
       )}
@@ -239,33 +496,56 @@ function PhaseLogRow({ log, theme }: {
   );
 }
 
-// ─── Composant : Modal résultats d'optimisation ───────────────────────────────
+// ─── Modal résultats d'optimisation ───────────────────────────────────────────
 
-function OptimizationResultModal({ result, budget, onClose, theme }: {
-  result: OptimizationResult;
-  budget: number;
-  onClose: () => void;
-  theme: ReturnType<typeof useTheme>;
+function OptimizationResultModal({ result, budget, originalQties, onClose, theme }: {
+  result:        OptimizationResult;
+  budget:        number;
+  originalQties: Map<number, number>; // id_shopping → qty originale
+  onClose:       () => void;
+  theme:         ReturnType<typeof useTheme>;
 }) {
   const c = theme.colors;
-  const [tab, setTab] = useState<'panier' | 'detail'>('panier');
+  const [tab, setTab] = useState<'panier' | 'retires' | 'phases'>('panier');
 
   const budgetRatio  = Math.min(result.totalCost / budget, 1);
   const barColor     = result.isWithinBudget ? c.success : c.danger;
+  const budgetLeft   = budget - result.totalCost;
+
+  // Catégorisation des lignes
   const keptLines    = result.lines.filter(l => l.state !== 'removed');
+  const removedLines = result.removedItems;
   const reducedLines = result.lines.filter(l => l.state === 'reduced');
+  const boostedLines = result.lines.filter(l => {
+    const orig = originalQties.get(l.id_shopping) ?? l.quantity;
+    return l.quantity > orig;
+  });
+
+  const tabLabels: { key: 'panier' | 'retires' | 'phases'; label: string; hidden?: boolean }[] = [
+    { key: 'panier',  label: `Panier (${keptLines.length})` },
+    { key: 'retires', label: `...`, hidden: removedLines.length === 0 },
+    { key: 'phases',  label: 'Phases' },
+    ];
 
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={s.overlay} onPress={onClose}>
-        <Pressable style={[s.resultSheet, { backgroundColor: c.background }]}
-          onPress={e => e.stopPropagation()}>
+        <Pressable  style={[
+            s.resultSheet,
+            {
+                backgroundColor: c.background,
+                maxHeight: "90%",
+            },
+            ]}
+            onPress={e => e.stopPropagation()}>
 
-          {/* Header */}
+          {/* ── Header ── */}
           <View style={[s.resultHeader, { borderBottomColor: c.border }]}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={[s.resultTitle, { color: c.text.primary }]}>Résultat d'optimisation</Text>
-              <Text style={[s.resultSubtitle, { color: c.text.secondary }]}>
+              <Text style={[s.resultSubtitle, {
+                color: result.isWithinBudget ? c.success : c.danger,
+              }]}>
                 {result.isWithinBudget ? '✓ Budget respecté' : '⚠ Budget dépassé'}
               </Text>
             </View>
@@ -274,9 +554,10 @@ function OptimizationResultModal({ result, budget, onClose, theme }: {
             </TouchableOpacity>
           </View>
 
-          {/* Dashboard */}
+          {/* ── Dashboard ── */}
           <View style={[s.dashboard, { backgroundColor: c.surface, borderColor: c.borderStrong }]}>
-            {/* Barre de progression budgétaire */}
+
+            {/* Barre budget */}
             <View style={s.dashRow}>
               <Text style={[s.dashLabel, { color: c.text.secondary }]}>Utilisation du budget</Text>
               <Text style={[s.dashPct, { color: barColor }]}>
@@ -284,90 +565,153 @@ function OptimizationResultModal({ result, budget, onClose, theme }: {
               </Text>
             </View>
             <View style={[s.progressTrack, { backgroundColor: c.backgroundMuted }]}>
-              <View style={[s.progressFill, { width: `${budgetRatio * 100}%` as any, backgroundColor: barColor }]} />
+              <View style={[s.progressFill, {
+                width: `${budgetRatio * 100}%` as any,
+                backgroundColor: barColor,
+              }]} />
             </View>
 
-            {/* Métriques */}
+            {/* 4 métriques */}
             <View style={s.metrics}>
               <View style={s.metric}>
                 <Text style={[s.metricValue, { color: c.text.primary }]}>
-                  {result.totalCost.toLocaleString()} Ar
+                  {result.totalCost.toLocaleString()}
                 </Text>
-                <Text style={[s.metricLabel, { color: c.text.secondary }]}>Coût final</Text>
+                <Text style={[s.metricLabel, { color: c.text.secondary }]}>Coût (Ar)</Text>
               </View>
               <View style={[s.metricDivider, { backgroundColor: c.border }]} />
               <View style={s.metric}>
-                <Text style={[s.metricValue, { color: result.savings > 0 ? c.success : c.text.muted }]}>
-                  -{result.savings.toLocaleString()} Ar
+                <Text style={[s.metricValue, { color: budgetLeft >= 0 ? c.success : c.danger }]}>
+                  {budgetLeft.toLocaleString()}
                 </Text>
-                <Text style={[s.metricLabel, { color: c.text.secondary }]}>Économies</Text>
+                <Text style={[s.metricLabel, { color: c.text.secondary }]}>Restant (Ar)</Text>
               </View>
               <View style={[s.metricDivider, { backgroundColor: c.border }]} />
               <View style={s.metric}>
-                <Text style={[s.metricValue, { color: result.removedItems.length > 0 ? c.danger : c.success }]}>
-                  {result.removedItems.length}
+                <Text style={[s.metricValue, { color: removedLines.length > 0 ? c.danger : c.success }]}>
+                  {removedLines.length}
                 </Text>
                 <Text style={[s.metricLabel, { color: c.text.secondary }]}>Retirés</Text>
               </View>
+              <View style={[s.metricDivider, { backgroundColor: c.border }]} />
+              <View style={s.metric}>
+                <Text style={[s.metricValue, { color: boostedLines.length > 0 ? c.accent.primary : c.text.muted }]}>
+                  {boostedLines.length}
+                </Text>
+                <Text style={[s.metricLabel, { color: c.text.secondary }]}>Boostés</Text>
+              </View>
             </View>
 
-            {/* Alertes */}
+            {/* Alertes contextuelles */}
             {reducedLines.length > 0 && (
-              <View style={[s.alert, { backgroundColor: c.backgroundMuted }]}>
+              <View style={[s.alert, { backgroundColor: c.warning + '18', borderColor: c.warning + '44' }]}>
                 <AlertTriangle size={13} color={c.warning} strokeWidth={2} />
                 <Text style={[s.alertText, { color: c.warning }]}>
                   {reducedLines.length} article(s) avec quantité réduite
                 </Text>
               </View>
             )}
+            {boostedLines.length > 0 && (
+              <View style={[s.alert, { backgroundColor: c.accent.primary + '18', borderColor: c.accent.primary + '44' }]}>
+                <TrendingUp size={13} color={c.accent.primary} strokeWidth={2} />
+                <Text style={[s.alertText, { color: c.accent.primary }]}>
+                  {boostedLines.length} article(s) avec quantité augmentée grâce au budget restant
+                </Text>
+              </View>
+            )}
             {!result.isWithinBudget && (
-              <View style={[s.alert, { backgroundColor: c.backgroundMuted }]}>
+              <View style={[s.alert, { backgroundColor: c.danger + '18', borderColor: c.danger + '44' }]}>
                 <AlertTriangle size={13} color={c.danger} strokeWidth={2} />
                 <Text style={[s.alertText, { color: c.danger }]}>
-                  Dépassement de {(result.totalCost - budget).toLocaleString()} Ar — augmentez le budget
+                  Dépassement de {(result.totalCost - budget).toLocaleString()} Ar
                 </Text>
               </View>
             )}
           </View>
 
-          {/* Onglets */}
+          {/* ── Onglets ── */}
           <View style={[s.tabs, { borderBottomColor: c.border }]}>
-            {(['panier', 'detail'] as const).map(t => (
-              <TouchableOpacity
-                key={t}
-                style={[s.tab, tab === t && { borderBottomColor: c.accent.primary, borderBottomWidth: 2 }]}
-                onPress={() => setTab(t)}
-              >
-                <Text style={[s.tabText, { color: tab === t ? c.accent.primary : c.text.secondary }]}>
-                  {t === 'panier' ? `Panier (${keptLines.length})` : 'Détail phases'}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {tabLabels
+              .filter(t => !t.hidden)
+              .map(t => (
+                <TouchableOpacity
+                  key={t.key}
+                  style={[s.tab, tab === t.key && {
+                    borderBottomColor: c.accent.primary, borderBottomWidth: 2,
+                  }]}
+                  onPress={() => setTab(t.key as any)}
+                >
+                  <Text style={[s.tabText, { color: tab === t.key ? c.accent.primary : c.text.secondary }]}>
+                    {t.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
           </View>
 
-          {/* Contenu */}
+          {/* ── Contenu des onglets ── */}
           <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-            {tab === 'panier' ? (
+
+            {tab === 'panier' && (
               <View style={s.tabContent}>
-                {/* Articles conservés */}
-                {result.lines.map(line => (
-                  <OptimizedLineRow key={line.id_shopping} line={line} theme={theme} />
+                {keptLines.map(line => (
+                  <OptimizedLineRow
+                    key={line.id_shopping}
+                    line={line}
+                    originalQty={originalQties.get(line.id_shopping) ?? line.quantity}
+                    theme={theme}
+                  />
                 ))}
-                {/* Total */}
+
+                {/* Total à payer */}
                 <View style={[s.resultTotal, { backgroundColor: c.accent.primary }]}>
                   <Text style={s.resultTotalLabel}>Total à payer</Text>
                   <Text style={s.resultTotalValue}>
                     {result.totalCost.toLocaleString()} Ar
                   </Text>
                 </View>
+
+                {/* Budget non dépensé */}
+                {budgetLeft > 0 && (
+                  <View style={[s.budgetLeftCard, { backgroundColor: c.success + '18', borderColor: c.success + '44' }]}>
+                    <TrendingDown size={14} color={c.success} strokeWidth={2} />
+                    <Text style={[s.budgetLeftText, { color: c.success }]}>
+                      Budget non dépensé : {budgetLeft.toLocaleString()} Ar
+                    </Text>
+                  </View>
+                )}
               </View>
-            ) : (
+            )}
+
+            {tab === 'retires' && (
               <View style={s.tabContent}>
-                {result.phases.map(log => (
-                  <PhaseLogRow key={log.phase} log={log} theme={theme} />
+                {removedLines.length === 0 ? (
+                  <View style={s.emptyTab}>
+                    <Package size={32} color={c.text.muted} strokeWidth={1.5} />
+                    <Text style={[s.emptyTabText, { color: c.text.muted }]}>
+                      Aucun article retiré
+                    </Text>
+                  </View>
+                ) : (
+                  removedLines.map(line => (
+                    <OptimizedLineRow
+                      key={line.id_shopping}
+                      line={line}
+                      originalQty={originalQties.get(line.id_shopping) ?? line.quantity}
+                      theme={theme}
+                    />
+                  ))
+                )}
+              </View>
+            )}
+
+            {tab === 'phases' && (
+              <View style={s.tabContent}>
+                {result.phases.map((log, i) => (
+                  <PhaseLogRow key={i} log={log} theme={theme} />
                 ))}
               </View>
             )}
+
             <View style={{ height: 32 }} />
           </ScrollView>
         </Pressable>
@@ -430,11 +774,7 @@ export default function PurchaseScreen() {
   const onPressOptimize = useCallback(async () => {
     if (!activePannier) return;
     if (activePannier.budget <= 0) {
-      Alert.alert(
-        'Budget manquant',
-        'Définissez un budget pour votre panier avant d\'optimiser.',
-        [{ text: 'OK' }],
-      );
+      Alert.alert('Budget manquant', 'Définissez un budget avant d\'optimiser.', [{ text: 'OK' }]);
       return;
     }
     await handleOptimize();
@@ -444,8 +784,20 @@ export default function PurchaseScreen() {
     Alert.alert('Erreur', error, [{ text: 'OK', onPress: () => setError(null) }]);
   }
 
+  // Map id_shopping → OptimizedLine pour lookup O(1) dans les lignes
+  const optimizedMap = new Map<number, OptimizedLine>(
+    optimizationResult
+      ? [...optimizationResult.lines, ...optimizationResult.removedItems]
+          .map(l => [l.id_shopping, l])
+      : []
+  );
+
+  // Map id_shopping → qty originale (avant optimisation)
+  const originalQties = new Map<number, number>(
+    shoppingItems.map(i => [i.id_shopping, i.quantity_requested])
+  );
+
   const totalCost = computeSecureTotalCost(shoppingItems);
-  const hasResult = optimizationResult !== null;
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.background }]} edges={['top']}>
@@ -500,17 +852,19 @@ export default function PurchaseScreen() {
           </View>
         )}
 
-        {/* Résultat précédent (si disponible) */}
-        {hasResult && activePannier && (
+        {/* Bandeau résultat précédent */}
+        {optimizationResult && activePannier && (
           <TouchableOpacity
-            style={[s.resultBanner, { backgroundColor: optimizationResult!.isWithinBudget ? c.success : c.danger }]}
-            onPress={() => {}} // déjà visible via modal — ce bouton rouvre
+            style={[s.resultBanner, {
+              backgroundColor: optimizationResult.isWithinBudget ? c.success : c.danger,
+            }]}
+            onPress={() => {}}
             activeOpacity={0.85}
           >
             <TrendingDown size={16} color="#fff" strokeWidth={2} />
             <Text style={s.resultBannerText}>
-              Dernier résultat : {optimizationResult!.totalCost.toLocaleString()} Ar
-              {optimizationResult!.isWithinBudget ? ' ✓' : ' ⚠'}
+              Dernière optimisation : {optimizationResult.totalCost.toLocaleString()} Ar
+              {optimizationResult.isWithinBudget ? ' ✓' : ' ⚠'}
             </Text>
             <TouchableOpacity onPress={() => setOptimizationResult(null)} hitSlop={8}>
               <X size={14} color="rgba(255,255,255,0.7)" />
@@ -557,6 +911,7 @@ export default function PurchaseScreen() {
               <ShoppingItemRow
                 key={item.id_shopping}
                 item={item}
+                optimizedLine={optimizedMap.get(item.id_shopping) ?? null}
                 onDelete={() => handleRemoveFromShoppingList(item.id_shopping)}
                 theme={theme}
               />
@@ -579,6 +934,16 @@ export default function PurchaseScreen() {
                     color: activePannier.budget - totalCost >= 0 ? c.success : c.danger,
                   }]}>
                     {(activePannier.budget - totalCost).toLocaleString()} Ar
+                  </Text>
+                </View>
+              )}
+              {optimizationResult && (
+                <View style={[s.totalRow, s.totalRowSeparated, { borderTopColor: c.border }]}>
+                  <Text style={[s.totalLabel, { color: c.accent.primary }]}>
+                    Après optimisation
+                  </Text>
+                  <Text style={[s.totalValue, { color: c.accent.primary }]}>
+                    {optimizationResult.totalCost.toLocaleString()} Ar
                   </Text>
                 </View>
               )}
@@ -607,7 +972,9 @@ export default function PurchaseScreen() {
           ) : (
             <>
               <Sparkles size={18} color="#fff" strokeWidth={2} />
-              <Text style={s.fabText}>Optimiser le panier</Text>
+              <Text style={s.fabText}>
+                {optimizationResult ? 'Ré-optimiser' : 'Optimiser le panier'}
+              </Text>
             </>
           )}
         </TouchableOpacity>
@@ -618,6 +985,7 @@ export default function PurchaseScreen() {
         <OptimizationResultModal
           result={optimizationResult}
           budget={activePannier.budget}
+          originalQties={originalQties}
           onClose={() => setOptimizationResult(null)}
           theme={theme}
         />
@@ -674,22 +1042,22 @@ const s = StyleSheet.create({
   newPannierBtnText: { fontSize: 13, fontWeight: '600' },
   scroll:            { paddingHorizontal: 20, paddingTop: 16, gap: 14 },
 
-  // Pannier card
+  // Pannier
   pannierCard:    { borderRadius: 20, padding: 20, position: 'relative' },
   pannierEmpty:   { borderRadius: 20, padding: 24, borderWidth: 1, alignItems: 'center', gap: 8 },
   pannierEmptyText: { fontSize: 14, fontWeight: '500' },
   circle1: { position: 'absolute', width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.1)', top: -30, right: -20 },
   circle2: { position: 'absolute', width: 80,  height: 80,  borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.08)', bottom: -10, left: 40 },
-  pannierCardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
-  pannierLabel:   { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
-  pannierDesc:    { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  pannierDate:    { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
-  switchBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)' },
-  switchBtnText:  { color: '#fff', fontSize: 12, fontWeight: '600' },
-  budgetRow:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  budgetLabel:    { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '500' },
-  budgetValue:    { color: '#fff', fontSize: 15, fontWeight: '700', textDecorationLine: 'underline', textDecorationColor: 'rgba(255,255,255,0.5)' },
-  budgetInput:    { color: '#fff', fontSize: 15, fontWeight: '700', borderBottomWidth: 1, borderBottomColor: '#fff', minWidth: 80 },
+  pannierCardRow:   { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
+  pannierLabel:     { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
+  pannierDesc:      { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
+  pannierDate:      { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
+  switchBtn:        { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)' },
+  switchBtnText:    { color: '#fff', fontSize: 12, fontWeight: '600' },
+  budgetRow:        { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  budgetLabel:      { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '500' },
+  budgetValue:      { color: '#fff', fontSize: 15, fontWeight: '700', textDecorationLine: 'underline', textDecorationColor: 'rgba(255,255,255,0.5)' },
+  budgetInput:      { color: '#fff', fontSize: 15, fontWeight: '700', borderBottomWidth: 1, borderBottomColor: '#fff', minWidth: 80 },
 
   // Sélecteur panier
   pannierList:      { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
@@ -698,7 +1066,7 @@ const s = StyleSheet.create({
   pannierListSub:   { fontSize: 12, marginTop: 2 },
 
   // Résultat banner
-  resultBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 12 },
+  resultBanner:     { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 12 },
   resultBannerText: { flex: 1, color: '#fff', fontSize: 13, fontWeight: '600' },
 
   // Quick actions
@@ -707,21 +1075,27 @@ const s = StyleSheet.create({
   quickBtnText: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
 
   // Shopping list
-  shoppingRow:     { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 14, borderWidth: 1, marginBottom: 8 },
-  shoppingIcon:    { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  shoppingProduct: { fontSize: 14, fontWeight: '700' },
-  shoppingSeller:  { fontSize: 12, marginTop: 1 },
-  shoppingQty:     { fontSize: 15, fontWeight: '800' },
+  shoppingRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: 1, marginBottom: 8, overflow: 'hidden' },
+  shoppingStateBar: { width: 4, alignSelf: 'stretch', flexShrink: 0 },
+  shoppingIcon:     { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginVertical: 10 },
+  shoppingTopRow:   { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  shoppingProduct:  { fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  shoppingSeller:   { fontSize: 11, marginTop: 1 },
+  shoppingQtyWrap:  { alignItems: 'flex-end', flexShrink: 0, paddingVertical: 10, paddingRight: 4 },
+  shoppingQtyOrig:  { fontSize: 10, textDecorationLine: 'line-through' },
+  shoppingQty:      { fontSize: 15, fontWeight: '800' },
+  shoppingSubtotal: { fontSize: 11, fontWeight: '500', flexShrink: 0, paddingRight: 4 },
 
   // Empty
   emptyList:    { alignItems: 'center', gap: 10, paddingVertical: 32, borderRadius: 16, borderWidth: 1, borderStyle: 'dashed' },
   emptyListText:{ fontSize: 14, fontWeight: '500' },
 
   // Total
-  totalCard:  { borderRadius: 14, borderWidth: 1, padding: 16, gap: 8 },
-  totalRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  totalLabel: { fontSize: 13, fontWeight: '500' },
-  totalValue: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
+  totalCard:         { borderRadius: 14, borderWidth: 1, padding: 16, gap: 8 },
+  totalRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalRowSeparated: { marginTop: 4, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  totalLabel:        { fontSize: 13, fontWeight: '500' },
+  totalValue:        { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
 
   // FAB
   fabWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingBottom: 24, paddingTop: 12 },
@@ -733,10 +1107,10 @@ const s = StyleSheet.create({
   resultSheet:  { height: '90%', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
   resultHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 20, borderBottomWidth: 1 },
   resultTitle:  { fontSize: 18, fontWeight: '800', letterSpacing: -0.3 },
-  resultSubtitle: { fontSize: 13, marginTop: 2 },
+  resultSubtitle: { fontSize: 13, fontWeight: '600', marginTop: 2 },
 
   // Dashboard
-  dashboard:    { margin: 16, borderRadius: 16, borderWidth: 1, padding: 16, gap: 12 },
+  dashboard:    { margin: 16, borderRadius: 16, borderWidth: 1, padding: 16, gap: 10 },
   dashRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   dashLabel:    { fontSize: 12, fontWeight: '500' },
   dashPct:      { fontSize: 14, fontWeight: '800' },
@@ -744,35 +1118,45 @@ const s = StyleSheet.create({
   progressFill: { height: '100%', borderRadius: 100 },
   metrics:      { flexDirection: 'row', alignItems: 'center' },
   metric:       { flex: 1, alignItems: 'center', gap: 2 },
-  metricValue:  { fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
+  metricValue:  { fontSize: 14, fontWeight: '800', letterSpacing: -0.3 },
   metricLabel:  { fontSize: 10, fontWeight: '500' },
-  metricDivider:{ width: 1, height: 32 },
-  alert:        { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 8 },
+  metricDivider:{ width: 1, height: 30 },
+  alert:        { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 8, borderWidth: 1 },
   alertText:    { fontSize: 12, fontWeight: '500', flex: 1 },
 
   // Onglets
-  tabs:     { flexDirection: 'row', borderBottomWidth: 1, marginHorizontal: 16 },
-  tab:      { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabText:  { fontSize: 13, fontWeight: '600' },
+  tabs:    { flexDirection: 'row', borderBottomWidth: 1, marginHorizontal: 16 },
+  tab:     { flex: 1, paddingVertical: 12, alignItems: 'center' },
+  tabText: { fontSize: 12, fontWeight: '600' },
   tabContent: { padding: 16, gap: 8 },
 
   // Lignes résultat
-  resultRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 12, borderWidth: 1 },
-  resultLeft:    { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  resultProduct: { fontSize: 14, fontWeight: '700' },
-  resultSeller:  { fontSize: 12, marginTop: 1 },
-  resultSubtotal:{ fontSize: 14, fontWeight: '800' },
-  resultTotal:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderRadius: 14, marginTop: 8 },
+  resultRow:        { flexDirection: 'row', alignItems: 'stretch', borderRadius: 12, borderWidth: 1, overflow: 'hidden', marginBottom: 2 },
+  resultAccentBar:  { width: 4, flexShrink: 0 },
+  resultBody:       { flex: 1, padding: 12, gap: 4 },
+  resultTopRow:     { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  resultProduct:    { fontSize: 14, fontWeight: '700' },
+  resultBottomRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  resultSeller:     { fontSize: 11 },
+  resultPriceQty:   { fontSize: 11 },
+  resultSubtotal:   { fontSize: 14, fontWeight: '800', letterSpacing: -0.3, flexShrink: 0 },
+  resultTotal:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderRadius: 14, marginTop: 8 },
   resultTotalLabel: { color: '#fff', fontSize: 14, fontWeight: '600' },
   resultTotalValue: { color: '#fff', fontSize: 18, fontWeight: '800', letterSpacing: -0.3 },
+  budgetLeftCard:   { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 12, borderWidth: 1, marginTop: 4 },
+  budgetLeftText:   { fontSize: 13, fontWeight: '600', flex: 1 },
 
   // Phases
-  phaseRow:     { borderRadius: 12, borderWidth: 1, overflow: 'hidden' },
-  phaseHeader:  { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
-  phaseBadge:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  phaseBadgeText: { fontSize: 11, fontWeight: '700' },
-  phaseDesc:    { fontSize: 13, fontWeight: '600' },
-  phaseSaving:  { fontSize: 11, marginTop: 1 },
-  phaseActions: { paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, gap: 4 },
-  phaseAction:  { fontSize: 12, lineHeight: 18 },
+  phaseRow:      { borderRadius: 12, borderWidth: 1, overflow: 'hidden', marginBottom: 2 },
+  phaseHeader:   { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
+  phaseBadge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+  phaseBadgeText:{ fontSize: 11, fontWeight: '700' },
+  phaseDesc:     { fontSize: 13, fontWeight: '600' },
+  phaseSaving:   { fontSize: 11, marginTop: 1 },
+  phaseActions:  { paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, gap: 4 },
+  phaseAction:   { fontSize: 12, lineHeight: 18 },
+
+  // Onglet vide
+  emptyTab:     { alignItems: 'center', gap: 12, paddingVertical: 40 },
+  emptyTabText: { fontSize: 14, fontWeight: '500' },
 });
